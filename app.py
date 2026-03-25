@@ -1,27 +1,57 @@
 from flask import Flask, render_template, request, redirect
 import sqlite3
+import os
 
 app = Flask(__name__)
 
+# -------------------------------
+# DATABASE SETUP (WORKS ON RENDER)
+# -------------------------------
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+DB_PATH = os.path.join(BASE_DIR, "database.db")
+
+def get_db_connection():
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    return conn
+
+# Create table if not exists
+def init_db():
+    conn = get_db_connection()
+    conn.execute('''
+        CREATE TABLE IF NOT EXISTS expenses (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            amount REAL,
+            category TEXT,
+            date TEXT
+        )
+    ''')
+    conn.commit()
+    conn.close()
+
+init_db()
+
+# -------------------------------
+# ROUTES
+# -------------------------------
+
 @app.route("/")
-def home():
-    conn = sqlite3.connect("database.db")
-    cur = conn.cursor()
+def index():
+    conn = get_db_connection()
+    expenses = conn.execute(
+        "SELECT * FROM expenses ORDER BY date DESC"
+    ).fetchall()
 
-    # Get all expenses
-    cur.execute("SELECT * FROM expenses")
-    data = cur.fetchall()
-
-    # Get total spending
-    cur.execute("SELECT SUM(amount) FROM expenses")
-    total = cur.fetchone()[0]
+    total = conn.execute(
+        "SELECT SUM(amount) FROM expenses"
+    ).fetchone()[0]
 
     conn.close()
 
     if total is None:
         total = 0
 
-    return render_template("index.html", expenses=data, total=total)
+    return render_template("index.html", expenses=expenses, total=total)
 
 
 @app.route("/add", methods=["GET", "POST"])
@@ -31,14 +61,11 @@ def add():
         category = request.form["category"]
         date = request.form["date"]
 
-        conn = sqlite3.connect("database.db")
-        cur = conn.cursor()
-
-        cur.execute(
+        conn = get_db_connection()
+        conn.execute(
             "INSERT INTO expenses (amount, category, date) VALUES (?, ?, ?)",
-            (amount, category, date)
+            (amount, category, date),
         )
-
         conn.commit()
         conn.close()
 
@@ -47,36 +74,38 @@ def add():
     return render_template("add.html")
 
 
-# DELETE
 @app.route("/delete/<int:id>")
 def delete(id):
-    conn = sqlite3.connect("database.db")
-    cur = conn.cursor()
-
-    cur.execute("DELETE FROM expenses WHERE id = ?", (id,))
-
+    conn = get_db_connection()
+    conn.execute("DELETE FROM expenses WHERE id = ?", (id,))
     conn.commit()
     conn.close()
 
     return redirect("/")
 
 
-# ANALYTICS
 @app.route("/analytics")
 def analytics():
-    conn = sqlite3.connect("database.db")
-    cur = conn.cursor()
+    conn = get_db_connection()
 
-    cur.execute("SELECT category, SUM(amount) FROM expenses GROUP BY category")
-    category_data = cur.fetchall()
+    data = conn.execute(
+        "SELECT category, SUM(amount) as total FROM expenses GROUP BY category"
+    ).fetchall()
 
     conn.close()
 
-    categories = [row[0] for row in category_data]
-    amounts = [row[1] for row in category_data]
+    categories = [row["category"] for row in data]
+    amounts = [row["total"] for row in data]
 
-    return render_template("analytics.html", categories=categories, amounts=amounts)
+    return render_template(
+        "analytics.html",
+        categories=categories,
+        amounts=amounts
+    )
 
 
+# -------------------------------
+# RUN (LOCAL ONLY)
+# -------------------------------
 if __name__ == "__main__":
     app.run(debug=True)
